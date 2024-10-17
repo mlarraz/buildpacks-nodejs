@@ -1,14 +1,14 @@
 // Required due to: https://github.com/rust-lang/rust/issues/95513
 #![allow(unused_crate_dependencies)]
 
+use heroku_nodejs_utils::{distribution::Distribution, vrs::Version};
+
 use anyhow::{Context, Result};
 use heroku_inventory_utils::{
     checksum::Checksum,
     inv::{read_inventory_file, Arch, Artifact, Inventory, Os},
 };
 use keep_a_changelog_file::{ChangeGroup, Changelog};
-use node_semver::Version;
-use serde::Deserialize;
 use sha2::Sha256;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -133,7 +133,7 @@ fn fetch_upstream_artifacts(
     inventory_artifacts: &HashSet<Artifact<Version, Sha256>>,
 ) -> Result<HashSet<Artifact<Version, Sha256>>> {
     let mut upstream_artifacts = HashSet::new();
-    for release in list_releases()? {
+    for release in Distribution::Node.list_releases()? {
         if release.version >= Version::parse("0.8.6")? {
             let supported_platforms = [
                 ("linux-arm64", Os::Linux, Arch::Arm64),
@@ -153,7 +153,7 @@ fn fetch_upstream_artifacts(
                 } else {
                     let filename = format!("node-v{}-{}.tar.gz", release.version, file);
 
-                    let shasums = fetch_checksums(&release.version)?;
+                    let shasums = Distribution::Node.fetch_checksums(&release.version)?;
                     let checksum_hex = shasums
                         .get(&filename)
                         .ok_or_else(|| anyhow::anyhow!("Checksum not found for {}", filename))?;
@@ -173,50 +173,4 @@ fn fetch_upstream_artifacts(
         }
     }
     Ok(upstream_artifacts)
-}
-
-fn fetch_checksums(version: &Version) -> Result<HashMap<String, String>> {
-    ureq::get(&format!(
-        "https://nodejs.org/download/release/v{version}/SHASUMS256.txt"
-    ))
-    .call()?
-    .into_string()
-    .map_err(anyhow::Error::from)
-    .map(|x| parse_shasums(&x))
-}
-
-// Parses a SHASUMS256.txt file into a map of filename to checksum.
-// Lines are expected to be of the form `<checksum> <filename>`.
-fn parse_shasums(input: &str) -> HashMap<String, String> {
-    input
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            match (parts.next(), parts.next(), parts.next()) {
-                (Some(checksum), Some(filename), None) => Some((
-                    // Some of the checksum filenames contain a leading `./` (e.g.
-                    // https://nodejs.org/download/release/v0.11.6/SHASUMS256.txt)
-                    filename.trim_start_matches("./").to_string(),
-                    checksum.to_string(),
-                )),
-                _ => None,
-            }
-        })
-        .collect()
-}
-
-const NODE_UPSTREAM_LIST_URL: &str = "https://nodejs.org/download/release/index.json";
-
-#[derive(Deserialize, Debug)]
-struct NodeJSRelease {
-    pub(crate) version: Version,
-    pub(crate) files: Vec<String>,
-}
-
-fn list_releases() -> Result<Vec<NodeJSRelease>> {
-    ureq::get(NODE_UPSTREAM_LIST_URL)
-        .call()
-        .context("Failed to fetch nodejs.org release list")?
-        .into_json::<Vec<NodeJSRelease>>()
-        .context("Failed to parse nodejs.org release list from JSON")
 }

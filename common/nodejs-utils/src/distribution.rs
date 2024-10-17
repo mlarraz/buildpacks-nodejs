@@ -1,11 +1,12 @@
 use crate::{
     inv::Inventory,
-    nodejs_org, npmjs_org, s3,
+    nodejs_org::{self, NodeJSRelease}, npmjs_org, s3,
     vrs::{Requirement, Version, VersionSet},
 };
 use anyhow::anyhow;
 use regex::Regex;
 use std::{fmt, str::FromStr};
+use std::collections::{HashSet, HashMap};
 
 /// Heroku nodebin AWS S3 Bucket name
 pub const DEFAULT_BUCKET: &str = "heroku-nodebin";
@@ -110,17 +111,37 @@ impl Distribution {
             Self::Npm => r"npm/(?P<channel>\w+)/npm-v(?P<version>\d+\.\d+\.\d+(-[\w\.]+)?)\.tar\.gz"
         }).map_err(|e| anyhow!("Mirrored release regex error: {e}"))
     }
+
+    pub fn fetch_checksums(&self, version: &Version) -> anyhow::Result<HashMap<String, String>> {
+        match self {
+            Self::Node => nodejs_org::fetch_checksums(version),
+            _ => Err(anyhow!("Checksums not supported for {self}")),
+        }
+    }
+
+    pub fn list_releases(&self) -> anyhow::Result<HashSet<NodeJSRelease>> {
+        match self {
+            Self::Node => list_upstream_node_releases(),
+            _ => Err(anyhow!("Releases not supported for {self}")),
+        }
+    }
 }
 
 fn list_upstream_node_versions() -> anyhow::Result<VersionSet> {
-    nodejs_org::list_releases()?
-        .into_iter()
-        .map(|rls| {
-            Version::parse(&rls.version).map_err(|e| {
-                anyhow!("Couldn't parse upstream nodejs.org version as a version: {e}")
-            })
-        })
-        .collect()
+    list_upstream_node_releases().map(|releases| {
+        releases
+            .into_iter()
+            .map(|release| release.version)
+            .collect()
+    })
+}
+
+fn list_upstream_node_releases() -> anyhow::Result<HashSet<NodeJSRelease>> {
+    nodejs_org::list_releases().map(|releases| {
+        releases
+            .into_iter()
+            .collect()
+    })
 }
 
 const IGNORE_YARN_VERSIONS: [&str; 1] = [
